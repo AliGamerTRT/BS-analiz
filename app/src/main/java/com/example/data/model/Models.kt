@@ -119,7 +119,8 @@ data class AnalysisResult(
     val detectionConfidence: Float, // 0.0 to 1.0
     val detectedSummary: String,
     val isSuccess: Boolean,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val requiresApiKey: Boolean = false
 )
 
 data class AppSettings(
@@ -128,7 +129,8 @@ data class AppSettings(
     val recommendationCount: Int = 3,
     val autoAnalyze: Boolean = false,
     val language: String = "tr",
-    val darkTheme: Boolean = true
+    val darkTheme: Boolean = true,
+    val geminiApiKey: String = ""
 )
 
 enum class BubbleSize(val dpSize: Int, val titleTr: String) {

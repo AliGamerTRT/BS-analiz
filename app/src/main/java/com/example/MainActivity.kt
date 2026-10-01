@@ -201,6 +201,8 @@ fun MainAppScaffold(
                         hasOverlayPermission = hasOverlayPermission,
                         hasCapturePermission = hasCapturePermission,
                         hasNotificationPermission = hasNotificationPermission,
+                        hasGeminiKey = settingsRepository.getEffectiveGeminiApiKey().isNotBlank(),
+                        onNavigateToSettings = { currentTab = NavTab.SETTINGS },
                         onRequestOverlayPermission = {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                                 val intent = Intent(

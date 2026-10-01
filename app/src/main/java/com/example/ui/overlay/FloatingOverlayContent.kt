@@ -1,20 +1,16 @@
 package com.example.ui.overlay
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,9 +29,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material3.Badge
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -44,7 +39,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
@@ -66,6 +60,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -74,6 +69,7 @@ import androidx.compose.ui.unit.sp
 import com.example.data.model.AnalysisResult
 import com.example.data.model.BubbleSize
 import com.example.data.model.Recommendation
+import kotlin.math.hypot
 
 @Composable
 fun FloatingOverlayRoot(
@@ -87,7 +83,8 @@ fun FloatingOverlayRoot(
     onCloseExpanded: () -> Unit,
     onRescanClick: () -> Unit,
     onOpenSettingsClick: () -> Unit,
-    onCloseServiceClick: () -> Unit
+    onCloseServiceClick: () -> Unit,
+    onDragDelta: (Float, Float) -> Unit
 ) {
     Box(
         modifier = Modifier
@@ -102,7 +99,8 @@ fun FloatingOverlayRoot(
                 bubbleSize = bubbleSize,
                 hasResult = analysisResult != null,
                 onClick = onBubbleClick,
-                onLongClick = onBubbleLongClick
+                onLongClick = onBubbleLongClick,
+                onDragDelta = onDragDelta
             )
         } else {
             // Expanded Result Panel
@@ -112,7 +110,8 @@ fun FloatingOverlayRoot(
                 onClose = onCloseExpanded,
                 onRescan = onRescanClick,
                 onOpenApp = onOpenSettingsClick,
-                onStopService = onCloseServiceClick
+                onStopService = onCloseServiceClick,
+                onDragDelta = onDragDelta
             )
         }
     }
@@ -124,7 +123,8 @@ fun FloatingBubbleComponent(
     bubbleSize: BubbleSize,
     hasResult: Boolean,
     onClick: () -> Unit,
-    onLongClick: () -> Unit
+    onLongClick: () -> Unit,
+    onDragDelta: (Float, Float) -> Unit
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val pulseScale by infiniteTransition.animateFloat(
@@ -168,10 +168,39 @@ fun FloatingBubbleComponent(
                 )
             )
             .pointerInput(Unit) {
-                detectTapGestures(
-                    onTap = { onClick() },
-                    onLongPress = { onLongClick() }
-                )
+                val touchSlop = viewConfiguration.touchSlop
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    var totalDragX = 0f
+                    var totalDragY = 0f
+                    var isDragging = false
+
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+
+                        if (change.pressed) {
+                            val posChange = change.positionChange()
+                            totalDragX += posChange.x
+                            totalDragY += posChange.y
+                            val distance = hypot(totalDragX, totalDragY)
+
+                            if (!isDragging && distance > touchSlop) {
+                                isDragging = true
+                            }
+
+                            if (isDragging) {
+                                change.consume()
+                                onDragDelta(posChange.x, posChange.y)
+                            }
+                        } else {
+                            if (!isDragging) {
+                                onClick()
+                            }
+                            break
+                        }
+                    }
+                }
             },
         contentAlignment = Alignment.Center
     ) {
@@ -227,7 +256,8 @@ fun FloatingResultPanel(
     onClose: () -> Unit,
     onRescan: () -> Unit,
     onOpenApp: () -> Unit,
-    onStopService: () -> Unit
+    onStopService: () -> Unit,
+    onDragDelta: (Float, Float) -> Unit
 ) {
     Card(
         modifier = Modifier
@@ -244,9 +274,26 @@ fun FloatingResultPanel(
                 .padding(14.dp)
                 .verticalScroll(rememberScrollState())
         ) {
-            // Header
+            // Draggable Header Bar
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                if (change.pressed) {
+                                    val posChange = change.positionChange()
+                                    change.consume()
+                                    onDragDelta(posChange.x, posChange.y)
+                                } else {
+                                    break
+                                }
+                            }
+                        }
+                    },
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -319,14 +366,52 @@ fun FloatingResultPanel(
                         CircularProgressIndicator(color = Color(0xFF00F5D4))
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "Ekran Analiz Ediliyor...",
+                            "Ekran Gemini AI ile Analiz Ediliyor...",
                             color = Color.White,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium
                         )
                     }
                 }
-            } else if (result == null || result.recommendations.isEmpty()) {
+            } else if (result?.requiresApiKey == true) {
+                // Clear notification when Gemini API key is missing
+                Surface(
+                    color = Color(0xFF261938),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Key, contentDescription = null, tint = Color(0xFFFFD166), modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "Gemini AI Anahtarı Gerekli",
+                                color = Color(0xFFFFD166),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "Karakterleri ve haritayı ekrandan %100 doğru algılamak için Gemini API anahtarı ekleyin veya manuel seçim yapın.",
+                            color = Color(0xFFEDE9FE),
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = onOpenApp,
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00F5D4)),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Ayarlar'da Anahtar Gir", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+            } else if (result == null || result.recommendations.isEmpty() || !result.isSuccess) {
                 Surface(
                     color = Color(0xFF241C3D),
                     shape = RoundedCornerShape(12.dp),
@@ -337,29 +422,60 @@ fun FloatingResultPanel(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            "⚠️ Draft Bilgisi Okunamadı",
+                            "⚠️ Ekran Okunamadı",
                             color = Color(0xFFFF6B6B),
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.sp
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "Brawl Stars karakter seçim ekranındayken tekrar tarayın.",
+                            result?.errorMessage ?: "Brawl Stars draft ekranındayken tekrar tarayın.",
                             color = Color(0xFFCCC5E8),
                             fontSize = 11.sp,
                             textAlign = TextAlign.Center
                         )
                         Spacer(Modifier.height(8.dp))
-                        Button(
-                            onClick = onRescan,
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00F5D4)),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Text("Yeniden Tara", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = onRescan,
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00F5D4)),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("Yeniden Tara", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+                            OutlinedButton(
+                                onClick = onOpenApp,
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("Simülatör", color = Color.White, fontSize = 12.sp)
+                            }
                         }
                     }
                 }
             } else {
+                // Detection Summary Pill
+                Surface(
+                    color = Color(0xFF221A3B),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("🎯", fontSize = 11.sp)
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = result.detectedSummary,
+                            color = Color(0xFF00F5D4),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
                 var selectedTabIndex by remember { mutableIntStateOf(0) }
                 val recs = result.recommendations
 
@@ -453,7 +569,6 @@ fun RecommendationDetailCard(rec: Recommendation) {
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    // Avatar badge with character color
                     val avatarColor = try {
                         Color(android.graphics.Color.parseColor(rec.brawler.avatarColorHex))
                     } catch (e: Exception) {
@@ -509,7 +624,7 @@ fun RecommendationDetailCard(rec: Recommendation) {
                     }
                 }
 
-                // Match Score Circle
+                // Match Score
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
                         text = "%${rec.totalScore}",

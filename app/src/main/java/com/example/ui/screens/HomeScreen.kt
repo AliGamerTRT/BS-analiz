@@ -61,6 +61,8 @@ fun HomeScreen(
     hasOverlayPermission: Boolean,
     hasCapturePermission: Boolean,
     hasNotificationPermission: Boolean,
+    hasGeminiKey: Boolean,
+    onNavigateToSettings: () -> Unit,
     onRequestOverlayPermission: () -> Unit,
     onRequestCapturePermission: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
@@ -85,6 +87,72 @@ fun HomeScreen(
             onStopService = onStopService,
             onOpenBrawlStars = onOpenBrawlStars
         )
+
+        Spacer(Modifier.height(14.dp))
+
+        // Gemini AI Vision Status Card
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = if (hasGeminiKey) Color(0xFF13282A) else Color(0xFF2E172B)
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(
+                    1.dp,
+                    if (hasGeminiKey) BrawlCyan.copy(alpha = 0.5f) else Color(0xFFFF5E7E).copy(alpha = 0.5f),
+                    RoundedCornerShape(16.dp)
+                )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(if (hasGeminiKey) BrawlCyan.copy(alpha = 0.2f) else Color(0xFFFF0055).copy(alpha = 0.2f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(if (hasGeminiKey) "✨" else "🔑", fontSize = 18.sp)
+                }
+
+                Spacer(Modifier.width(12.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (hasGeminiKey) "Gemini AI Vision Bağlı" else "Gemini API Anahtarı Gerekli",
+                        color = if (hasGeminiKey) BrawlCyan else Color(0xFFFF6B6B),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp
+                    )
+                    Text(
+                        text = if (hasGeminiKey)
+                            "Ekran analizi yapay zeka ile %100 doğrulukla yapılır."
+                        else
+                            "Karakterlerin hatasız tanınması için Ayarlar'dan Gemini API anahtarınızı girin.",
+                        color = Color(0xFFEDE9FE),
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp
+                    )
+                }
+
+                if (!hasGeminiKey) {
+                    Spacer(Modifier.width(8.dp))
+                    Button(
+                        onClick = onNavigateToSettings,
+                        colors = ButtonDefaults.buttonColors(containerColor = BrawlCyan),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.height(34.dp)
+                    ) {
+                        Text("Anahtar Gir", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    }
+                }
+            }
+        }
 
         Spacer(Modifier.height(16.dp))
 

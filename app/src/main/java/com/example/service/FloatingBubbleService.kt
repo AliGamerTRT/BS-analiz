@@ -16,8 +16,6 @@ import android.os.IBinder
 import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
-import android.view.MotionEvent
-import android.view.View
 import android.view.WindowManager
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -29,7 +27,6 @@ import com.example.MainActivity
 import com.example.R
 import com.example.data.model.AnalysisResult
 import com.example.data.model.AppSettings
-import com.example.data.model.BubbleSize
 import com.example.data.repository.ScreenAnalyzer
 import com.example.data.repository.SettingsRepository
 import com.example.ui.overlay.FloatingOverlayRoot
@@ -39,7 +36,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import kotlin.math.abs
 
 class FloatingBubbleService : Service() {
 
@@ -159,8 +155,7 @@ class FloatingBubbleService : Service() {
             else
                 @Suppress("DEPRECATION")
                 WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -198,52 +193,21 @@ class FloatingBubbleService : Service() {
                     },
                     onCloseServiceClick = {
                         stopSelf()
-                    }
-                )
-            }
-
-            // Drag touch listener
-            var initialX = 0
-            var initialY = 0
-            var initialTouchX = 0f
-            var initialTouchY = 0f
-            var isDragging = false
-
-            setOnTouchListener { _, event ->
-                val params = this@FloatingBubbleService.layoutParams ?: return@setOnTouchListener false
-                when (event.action) {
-                    MotionEvent.ACTION_DOWN -> {
-                        initialX = params.x
-                        initialY = params.y
-                        initialTouchX = event.rawX
-                        initialTouchY = event.rawY
-                        isDragging = false
-                        true
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        val dx = (event.rawX - initialTouchX).toInt()
-                        val dy = (event.rawY - initialTouchY).toInt()
-                        if (abs(dx) > 10 || abs(dy) > 10) {
-                            isDragging = true
-                            params.x = initialX + dx
-                            params.y = initialY + dy
+                    },
+                    onDragDelta = { dx, dy ->
+                        this@FloatingBubbleService.layoutParams?.let { params ->
+                            val screenW = MediaProjectionHolder.screenWidth.coerceAtLeast(720)
+                            val screenH = MediaProjectionHolder.screenHeight.coerceAtLeast(1280)
+                            params.x = (params.x + dx).toInt().coerceIn(0, screenW - 80)
+                            params.y = (params.y + dy).toInt().coerceIn(0, screenH - 80)
                             try {
-                                windowManager.updateViewLayout(this, params)
+                                windowManager.updateViewLayout(this@apply, params)
                             } catch (e: Exception) {
                                 Log.e(TAG, "Error updating window layout", e)
                             }
                         }
-                        true
                     }
-                    MotionEvent.ACTION_UP -> {
-                        if (!isDragging) {
-                            // Single tap
-                            handleBubbleClick()
-                        }
-                        true
-                    }
-                    else -> false
-                }
+                )
             }
         }
 
@@ -273,13 +237,14 @@ class FloatingBubbleService : Service() {
                 val mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                 MediaProjectionHolder.initProjection(mediaProjectionManager)
 
+                val effectiveKey = settingsRepository.getEffectiveGeminiApiKey()
                 val capturedBitmap = MediaProjectionHolder.captureCurrentScreen()
+
                 val result = if (capturedBitmap != null) {
-                    ScreenAnalyzer.analyzeScreenshot(capturedBitmap)
+                    ScreenAnalyzer.analyzeScreenshot(capturedBitmap, effectiveKey)
                 } else {
-                    // Fallback to local heuristic test simulation if screenshot was empty
                     val dummyBitmap = android.graphics.Bitmap.createBitmap(1920, 1080, android.graphics.Bitmap.Config.ARGB_8888)
-                    ScreenAnalyzer.analyzeScreenshot(dummyBitmap)
+                    ScreenAnalyzer.analyzeScreenshot(dummyBitmap, effectiveKey)
                 }
 
                 analysisResultState = result

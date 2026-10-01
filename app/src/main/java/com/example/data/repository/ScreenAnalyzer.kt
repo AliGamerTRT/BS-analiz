@@ -3,7 +3,6 @@ package com.example.data.repository
 import android.graphics.Bitmap
 import android.util.Base64
 import android.util.Log
-import com.example.BuildConfig
 import com.example.data.model.AnalysisResult
 import com.example.data.model.BrawlMap
 import com.example.data.model.DraftState
@@ -25,47 +24,108 @@ object ScreenAnalyzer {
     private const val TAG = "ScreenAnalyzer"
 
     private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .writeTimeout(20, TimeUnit.SECONDS)
+        .connectTimeout(25, TimeUnit.SECONDS)
+        .readTimeout(25, TimeUnit.SECONDS)
+        .writeTimeout(25, TimeUnit.SECONDS)
         .build()
 
-    suspend fun analyzeScreenshot(bitmap: Bitmap): AnalysisResult = withContext(Dispatchers.IO) {
-        val apiKey = BuildConfig.GEMINI_API_KEY
+    suspend fun analyzeScreenshot(bitmap: Bitmap, apiKey: String): AnalysisResult = withContext(Dispatchers.IO) {
+        val cleanKey = apiKey.trim()
 
-        if (apiKey.isNotBlank() && apiKey != "MY_GEMINI_API_KEY") {
-            try {
-                val cloudResult = callGeminiVision(bitmap, apiKey)
-                if (cloudResult != null) {
-                    return@withContext cloudResult
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Gemini vision call failed, falling back to local analysis", e)
-            }
+        if (cleanKey.isBlank() || cleanKey == "MY_GEMINI_API_KEY") {
+            // No API key configured: do NOT invent fake brawlers!
+            val emptyDraft = DraftState(
+                map = null,
+                mode = GameMode.BRAWL_BALL,
+                allyPicks = emptyList(),
+                enemyPicks = emptyList(),
+                allyBans = emptyList(),
+                enemyBans = emptyList()
+            )
+            return@withContext AnalysisResult(
+                draftState = emptyDraft,
+                recommendations = emptyList(),
+                detectionConfidence = 0.0f,
+                detectedSummary = "Gemini API Anahtarı Tanımlı Değil",
+                isSuccess = false,
+                requiresApiKey = true,
+                errorMessage = "Karakterlerin ekran görüntüsünden %100 doğru algılanması için Gemini API anahtarı gereklidir. Lütfen Ayarlar sekmesinden ücretsiz Gemini API anahtarınızı girin veya aşağıdaki 'Manuel Düzenle' seçeneğiyle maçtaki karakterleri hemen seçin."
+            )
         }
 
-        // Local smart heuristic visual analysis
-        return@withContext analyzeLocally(bitmap)
+        try {
+            // First try gemini-2.5-flash
+            val cloudResult = callGeminiVision(bitmap, cleanKey, "gemini-2.5-flash")
+            if (cloudResult != null) {
+                return@withContext cloudResult
+            }
+
+            // Fallback to gemini-3.5-flash if needed
+            val fallbackResult = callGeminiVision(bitmap, cleanKey, "gemini-3.5-flash")
+            if (fallbackResult != null) {
+                return@withContext fallbackResult
+            }
+
+            return@withContext AnalysisResult(
+                draftState = DraftState(),
+                recommendations = emptyList(),
+                detectionConfidence = 0.0f,
+                detectedSummary = "Ekran Analiz Edilemedi",
+                isSuccess = false,
+                errorMessage = "Görsel analizi yanıt vermedi. İnternet bağlantınızı veya Gemini API anahtarınızı kontrol edin."
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in analyzeScreenshot", e)
+            return@withContext AnalysisResult(
+                draftState = DraftState(),
+                recommendations = emptyList(),
+                detectionConfidence = 0.0f,
+                detectedSummary = "Hata",
+                isSuccess = false,
+                errorMessage = "Ekran analizi hatası: ${e.localizedMessage ?: "Bilinmeyen hata"}"
+            )
+        }
     }
 
-    private suspend fun callGeminiVision(bitmap: Bitmap, apiKey: String): AnalysisResult? = withContext(Dispatchers.IO) {
+    private suspend fun callGeminiVision(bitmap: Bitmap, apiKey: String, modelName: String): AnalysisResult? = withContext(Dispatchers.IO) {
         try {
             val base64Image = bitmapToBase64(bitmap)
             val prompt = """
-                Analyze this Brawl Stars Ranked / Power League / Competitive Draft screen image carefully.
-                Extract the draft information in JSON format with exact keys:
+                You are an expert Brawl Stars Ranked / Competitive Draft analyzer.
+                Analyze this Brawl Stars screen capture with extreme precision.
+
+                BRAWL STARS DRAFT RULES & LAYOUT:
+                1. MAP & GAME MODE:
+                   Look at the top center banner of the screen.
+                   - Detect the exact Map name (in English or Turkish, e.g. "Shooting Star", "Center Stage", "Super Beach", "Safe Zone", "Out in the Open", "Hard Rock Mine", "Flaring Phoenix", "Belle's Rock").
+                   - Detect the Game Mode: one of BRAWL_BALL, GEM_GRAB, HEIST, BOUNTY, HOT_ZONE, KNOCKOUT, WIPEOUT.
+
+                2. BRAWLER DETECTION (EXTREMELY STRICT - DO NOT GUESS OR HALLUCINATE):
+                   - ALLY TEAM (Blue Side / Left): Look at the 3 player cards on the left column.
+                     List ONLY the brawlers that have actually been selected/locked in.
+                     If a card is empty, silhouette, or says "Picking..." / "Seçiyor...", DO NOT add any brawler!
+                   - ENEMY TEAM (Red Side / Right): Look at the 3 player cards on the right column.
+                     List ONLY the brawlers that have actually been selected/locked in.
+                     If a card is empty, silhouette, or says "Picking..." / "Seçiyor...", DO NOT add any brawler!
+                     CRITICAL: If an enemy has NOT picked Mortis, DO NOT output mortis! If no enemy has picked yet, return an empty array []!
+                   - BANS: Look at the 6 ban portrait icons at the bottom.
+                     List the banned brawlers. If none are banned, return an empty array [].
+
+                JSON Output Format:
                 {
-                   "mapName": "Map name in English or Turkish",
-                   "gameMode": "BRAWL_BALL, GEM_GRAB, HEIST, BOUNTY, HOT_ZONE, KNOCKOUT or WIPEOUT",
-                   "allyPicks": ["brawler_id_or_name"],
-                   "enemyPicks": ["brawler_id_or_name"],
-                   "allyBans": ["brawler_id_or_name"],
-                   "enemyBans": ["brawler_id_or_name"],
-                   "pickTurn": "FIRST_PICK, SECOND_PICK, COUNTER_PICK, or LAST_PICK",
+                   "mapName": "Name of the detected map or empty string",
+                   "gameMode": "BRAWL_BALL | GEM_GRAB | HEIST | BOUNTY | HOT_ZONE | KNOCKOUT | WIPEOUT",
+                   "allyPicks": ["brawler_id"],
+                   "enemyPicks": ["brawler_id"],
+                   "allyBans": ["brawler_id"],
+                   "enemyBans": ["brawler_id"],
+                   "pickTurn": "FIRST_PICK | SECOND_PICK | COUNTER_PICK | LAST_PICK",
                    "confidence": 0.95
                 }
-                Use lowercase canonical brawler names (e.g. "piper", "draco", "clancy", "mortis", "gale", "frank", "colette", "brock", "byron").
-                Only output the raw valid JSON object without markdown formatting.
+
+                Canonical IDs: piper, angelo, belle, brock, mandy, nani, clancy, colette, colt, rico, mortis, kenji, cordelius, melodie, mico, crow, leon, fang, draco, frank, buster, meg, el_primo, larry_lawrie, tick, dynamike, barley, gale, moe, charlie, gene, byron, max, sandy, kit, poco, shelly, bull, surge, edgar, buzz, tara, chester, gray, stu, emz, amber, lou.
+
+                Output ONLY valid JSON without markdown formatting.
             """.trimIndent()
 
             val requestJson = JSONObject().apply {
@@ -88,13 +148,13 @@ object ScreenAnalyzer {
 
                 val genConfig = JSONObject().apply {
                     put("responseMimeType", "application/json")
-                    put("temperature", 0.1)
+                    put("temperature", 0.05)
                 }
                 put("generationConfig", genConfig)
             }
 
             val requestBody = requestJson.toString().toRequestBody("application/json".toMediaType())
-            val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$apiKey"
+            val url = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent?key=$apiKey"
 
             val request = Request.Builder()
                 .url(url)
@@ -103,7 +163,7 @@ object ScreenAnalyzer {
 
             val response = httpClient.newCall(request).execute()
             if (!response.isSuccessful) {
-                Log.w(TAG, "Gemini API error code: ${response.code}")
+                Log.w(TAG, "Gemini $modelName returned error: ${response.code}")
                 return@withContext null
             }
 
@@ -117,11 +177,11 @@ object ScreenAnalyzer {
             val parsedJson = JSONObject(jsonText.replace("```json", "").replace("```", "").trim())
             val mapName = parsedJson.optString("mapName", "")
             val modeStr = parsedJson.optString("gameMode", "BRAWL_BALL")
-            val allyPicks = jsonArrayToStringList(parsedJson.optJSONArray("allyPicks"))
-            val enemyPicks = jsonArrayToStringList(parsedJson.optJSONArray("enemyPicks"))
-            val allyBans = jsonArrayToStringList(parsedJson.optJSONArray("allyBans"))
-            val enemyBans = jsonArrayToStringList(parsedJson.optJSONArray("enemyBans"))
-            val confidence = parsedJson.optDouble("confidence", 0.85).toFloat()
+            val allyPicks = sanitizeBrawlerList(jsonArrayToStringList(parsedJson.optJSONArray("allyPicks")))
+            val enemyPicks = sanitizeBrawlerList(jsonArrayToStringList(parsedJson.optJSONArray("enemyPicks")))
+            val allyBans = sanitizeBrawlerList(jsonArrayToStringList(parsedJson.optJSONArray("allyBans")))
+            val enemyBans = sanitizeBrawlerList(jsonArrayToStringList(parsedJson.optJSONArray("enemyBans")))
+            val confidence = parsedJson.optDouble("confidence", 0.90).toFloat()
 
             val mode = GameMode.fromString(modeStr)
             val matchedMap = BrawlDatabase.maps.firstOrNull {
@@ -139,7 +199,8 @@ object ScreenAnalyzer {
             )
 
             val recs = DraftAnalysisEngine.analyzeAndRecommend(draftState)
-            val summary = "Harita: ${matchedMap?.name ?: "Bilinmiyor"} | Mod: ${mode.displayNameTr} | Rakip: ${enemyPicks.joinToString()}"
+            val enemySummary = if (enemyPicks.isNotEmpty()) "Rakip: ${enemyPicks.joinToString { it.replaceFirstChar(Char::titlecase) }}" else "Rakip henüz seçmedi (İlk Pick)"
+            val summary = "Harita: ${matchedMap?.name ?: "Tespit Edildi"} | $enemySummary"
 
             return@withContext AnalysisResult(
                 draftState = draftState,
@@ -149,49 +210,20 @@ object ScreenAnalyzer {
                 isSuccess = true
             )
         } catch (e: Exception) {
-            Log.e(TAG, "Error in callGeminiVision", e)
+            Log.e(TAG, "Error parsing Gemini response", e)
             return@withContext null
         }
     }
 
-    private fun analyzeLocally(bitmap: Bitmap): AnalysisResult {
-        // Smart visual inspect of Brawl Stars screen aspect ratio and colors
-        val width = bitmap.width
-        val height = bitmap.height
-
-        // Check if landscape (typical Brawl Stars match/draft screen is horizontal 16:9 or 20:9)
-        val isLandscape = width > height
-        val sampleMap = BrawlDatabase.maps.random()
-        val sampleEnemies = listOf("frank", "mortis", "edgar").shuffled().take(2)
-        val sampleAllies = listOf("piper").take(1)
-        val sampleBans = listOf("clancy", "draco")
-
-        val draftState = DraftState(
-            map = sampleMap,
-            mode = sampleMap.mode,
-            allyPicks = sampleAllies,
-            enemyPicks = sampleEnemies,
-            allyBans = sampleBans.take(1),
-            enemyBans = sampleBans.drop(1),
-            pickTurn = PickTurn.COUNTER_PICK
-        )
-
-        val recs = DraftAnalysisEngine.analyzeAndRecommend(draftState)
-
-        val confidence = if (isLandscape) 0.88f else 0.72f
-        val summary = "Harita: ${sampleMap.name} | Mod: ${sampleMap.mode.displayNameTr} | Rakip: ${sampleEnemies.joinToString()}"
-
-        return AnalysisResult(
-            draftState = draftState,
-            recommendations = recs,
-            detectionConfidence = confidence,
-            detectedSummary = summary,
-            isSuccess = true
-        )
+    private fun sanitizeBrawlerList(list: List<String>): List<String> {
+        return list.mapNotNull { raw ->
+            val clean = raw.lowercase().trim().replace(" ", "_").replace("-", "_")
+            val brawler = BrawlDatabase.getBrawlerById(clean)
+            brawler?.id ?: if (clean.isNotBlank()) clean else null
+        }.distinct()
     }
 
     private fun bitmapToBase64(bitmap: Bitmap): String {
-        // Scale down to max 1280px for high speed and low network bandwidth
         val maxDim = 1280
         val scale = if (bitmap.width > maxDim || bitmap.height > maxDim) {
             val ratio = bitmap.width.toFloat() / bitmap.height.toFloat()

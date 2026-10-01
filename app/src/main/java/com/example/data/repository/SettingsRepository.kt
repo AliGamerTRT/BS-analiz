@@ -22,14 +22,30 @@ class SettingsRepository(context: Context) {
         val count = prefs.getInt("recommendation_count", 3)
         val autoAnalyze = prefs.getBoolean("auto_analyze", false)
         val darkTheme = prefs.getBoolean("dark_theme", true)
+        val geminiApiKey = prefs.getString("gemini_api_key", "") ?: ""
 
         return AppSettings(
             bubbleSize = bubbleSize,
             bubbleAlpha = alpha,
             recommendationCount = count,
             autoAnalyze = autoAnalyze,
-            darkTheme = darkTheme
+            darkTheme = darkTheme,
+            geminiApiKey = geminiApiKey
         )
+    }
+
+    fun getEffectiveGeminiApiKey(): String {
+        val userKey = _settingsFlow.value.geminiApiKey.trim()
+        if (userKey.isNotBlank()) return userKey
+        val buildKey = com.example.BuildConfig.GEMINI_API_KEY.trim()
+        if (buildKey.isNotBlank() && buildKey != "MY_GEMINI_API_KEY") return buildKey
+        return ""
+    }
+
+    fun updateGeminiApiKey(key: String) {
+        val clean = key.trim()
+        prefs.edit().putString("gemini_api_key", clean).apply()
+        _settingsFlow.value = _settingsFlow.value.copy(geminiApiKey = clean)
     }
 
     fun updateBubbleSize(size: BubbleSize) {
