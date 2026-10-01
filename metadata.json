@@ -1,0 +1,6 @@
+{
+  "name": "Brawl Stars Pick Assistant",
+  "description": "Brawl Stars maç ekranı analizörü ve draft pick asistanı. Floating bubble overlay, ekran analizi, counter ve sinerji önerileri.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

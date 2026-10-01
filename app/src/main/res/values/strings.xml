@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">Brawl Pick</string>
+    <string name="app_full_name">Brawl Stars Pick Assistant</string>
+    <string name="channel_overlay_name">Overlay Servisi</string>
+    <string name="channel_overlay_desc">Brawl Stars yüzen bubble ve analiz paneli servisi</string>
+    <string name="channel_capture_name">Ekran Yakalama</string>
+    <string name="channel_capture_desc">Brawl Stars draft ekranı anlık yakalama servisi</string>
+</resources>
